@@ -2,10 +2,45 @@ use core::arch::asm;
 
 use common::syscalls::trap_frame::TrapFrame;
 
-pub fn write_sscratch_register(value: *const TrapFrame) {
+// We need to make sure that the trap frame is the first member
+// We store a pointer to his structure in sscratch and on an interrupt
+// we're saving the context to the trap_frame, assuming it lies at offset
+// 0x0 of the struct.
+#[repr(C)]
+pub struct PerCpuData {
+    pub trap_frame: TrapFrame,
+    pub cpu_id: u64,
+}
+
+impl PerCpuData {
+    pub fn new(cpu_id: u64) -> Self {
+        Self {
+            trap_frame: TrapFrame::zero(),
+            cpu_id,
+        }
+    }
+
+    pub fn write_trap_frame(trap_frame: &TrapFrame) {
+        unsafe { (*get_per_cpu_data()).trap_frame = *trap_frame };
+    }
+
+    pub fn read_trap_frame() -> TrapFrame {
+        unsafe { (*get_per_cpu_data()).trap_frame }
+    }
+}
+
+pub fn write_sscratch_register(value: *const PerCpuData) {
     unsafe {
         asm!("csrw sscratch, {}", in(reg) value);
     }
+}
+
+pub fn get_per_cpu_data() -> *mut PerCpuData {
+    let ptr: *mut PerCpuData;
+    unsafe {
+        asm!("csrr {}, sscratch", out(reg) ptr);
+    }
+    ptr
 }
 
 pub fn write_sepc(value: usize) {

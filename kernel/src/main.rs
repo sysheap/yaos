@@ -70,8 +70,8 @@ extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) {
         "Supported SBI Versions >= 0.2"
     );
 
-    let harts = sbi::extensions::hart_state_extension::get_number_of_harts();
-    info!("Number of Cores: {harts}");
+    let num_cpus = sbi::extensions::hart_state_extension::get_number_of_harts();
+    info!("Number of Cores: {num_cpus}");
 
     symbols::init();
     device_tree::init(device_tree_pointer);
@@ -117,11 +117,11 @@ extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) {
 
     page_tables::activate_page_table(&page_tables::KERNEL_PAGE_TABLES);
 
-    interrupts::set_sscratch_to_kernel_trap_frame();
+    plic::init_uart_interrupt(hart_id);
 
-    plic::init_uart_interrupt();
+    scheduler::init(num_cpus);
 
-    scheduler::init();
+    cpu::write_sscratch_register(scheduler::THE.lock().get_per_cpu_data_ptr(hart_id));
 
     let mut pci_devices = enumerate_devices(&pci_information);
 
