@@ -70,6 +70,9 @@ extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) {
         "Supported SBI Versions >= 0.2"
     );
 
+    let harts = sbi::extensions::hart_state_extension::get_number_of_harts();
+    info!("Number of Cores: {harts}");
+
     symbols::init();
     device_tree::init(device_tree_pointer);
     let device_tree_range = get_devicetree_range();

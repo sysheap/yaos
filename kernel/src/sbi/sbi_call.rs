@@ -41,6 +41,10 @@ impl SbiRet {
             self
         );
     }
+
+    pub fn is_error(&self) -> bool {
+        self.error != SbiError::SBI_SUCCESS
+    }
 }
 
 impl Default for SbiRet {
