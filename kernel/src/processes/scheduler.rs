@@ -8,13 +8,12 @@ use crate::{
     cpu::{self, PerCpuData},
     debug, info,
     klibc::{elf::ElfFile, macros::unwrap_or_return, runtime_initialized::RuntimeInitializedData},
-    memory::page_tables::{activate_page_table, KERNEL_PAGE_TABLES},
     processes::{process::Process, timer},
     test::qemu_exit,
 };
 
 use super::{
-    process::{Pid, ProcessState},
+    process::{Pid, ProcessState, POWERSAVE_PID},
     process_table::{ProcessRef, ProcessTable},
 };
 
@@ -33,7 +32,7 @@ pub struct Scheduler {
 impl Scheduler {
     fn new(num_cpus: u64) -> Self {
         let mut process_table = ProcessTable::new();
-        let current_process = process_table.get_dummy_process();
+        let current_process = process_table.get_powersave_process();
 
         let elf = ElfFile::parse(INIT).expect("Cannot parse ELF file");
         let process = Process::from_elf(&elf, "init");
@@ -69,25 +68,15 @@ impl Scheduler {
 
     pub fn schedule(&mut self) {
         debug!("Schedule next process");
-        if self.prepare_next_process() {
-            timer::set_timer(10);
-            return;
-        }
-        activate_page_table(&KERNEL_PAGE_TABLES);
-        timer::disable_timer();
-        let addr = cpu::wfi_loop as *const () as usize;
-        debug!("setting sepc={addr:#x}");
-        cpu::write_sepc(addr);
-        cpu::set_ret_to_kernel_mode(true);
+        self.prepare_next_process();
+        timer::set_timer(10);
     }
 
     pub fn kill_current_process(&mut self) {
-        let current_process = self.swap_current_with_dummy();
-
-        activate_page_table(&KERNEL_PAGE_TABLES);
-        let pid = current_process.lock().get_pid();
-        drop(current_process);
+        let pid = self.current_process.lock().get_pid();
+        self.queue_current_process_back();
         self.process_table.kill(pid);
+        self.schedule();
     }
 
     pub fn let_current_process_wait_for(&self, pid: Pid) -> bool {
@@ -110,15 +99,10 @@ impl Scheduler {
         let highest_pid = self.process_table.get_highest_pid_without(&["yash"]);
 
         if let Some(pid) = highest_pid {
-            activate_page_table(&KERNEL_PAGE_TABLES);
             self.process_table.kill(pid);
         }
 
         self.schedule();
-    }
-
-    pub fn get_dummy_process(&self) -> ProcessRef {
-        self.process_table.get_dummy_process()
     }
 
     pub fn start_program(&mut self, name: &str) -> Option<Pid> {
@@ -135,7 +119,10 @@ impl Scheduler {
     }
 
     fn queue_current_process_back(&mut self) -> Pid {
-        self.swap_current_with_dummy().with_lock(|mut p| {
+        if self.current_process.lock().get_pid() == POWERSAVE_PID {
+            return POWERSAVE_PID;
+        }
+        self.swap_current_with_powersave().with_lock(|mut p| {
             p.set_program_counter(cpu::read_sepc());
             p.set_in_kernel_mode(cpu::is_in_kernel_mode());
             p.set_register_state(&PerCpuData::read_trap_frame());
@@ -145,7 +132,7 @@ impl Scheduler {
         })
     }
 
-    fn prepare_next_process(&mut self) -> bool {
+    fn prepare_next_process(&mut self) {
         let old_pid = self.queue_current_process_back();
 
         if self.process_table.is_empty() {
@@ -153,26 +140,28 @@ impl Scheduler {
             qemu_exit::exit_success();
         }
 
-        let next_process = unwrap_or_return!(self.process_table.next_runnable(old_pid), false);
+        self.current_process = self.process_table.next_runnable(old_pid);
+        self.set_cpu_reg_for_current_process();
+    }
 
-        next_process.with_lock(|p| {
+    fn set_cpu_reg_for_current_process(&self) {
+        self.current_process.with_lock(|p| {
             let pc = p.get_program_counter();
 
             PerCpuData::write_trap_frame(p.get_register_state());
             cpu::write_sepc(pc);
             cpu::set_ret_to_kernel_mode(p.get_in_kernel_mode());
-            activate_page_table(p.get_page_table());
 
-            debug!("Scheduling PID={} NAME={}", p.get_pid(), p.get_name());
+            debug!(
+                "CPU set to PID={} NAME={} pc={pc:#x}",
+                p.get_pid(),
+                p.get_name()
+            );
         });
-
-        self.current_process = next_process;
-
-        true
     }
 
-    fn swap_current_with_dummy(&mut self) -> ProcessRef {
-        let dummy_process = self.process_table.get_dummy_process();
+    fn swap_current_with_powersave(&mut self) -> ProcessRef {
+        let dummy_process = self.process_table.get_powersave_process();
         core::mem::replace(&mut self.current_process, dummy_process)
     }
 }

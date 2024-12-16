@@ -21,7 +21,7 @@ use core::{
 
 pub type Pid = u64;
 
-pub const NEVER_PID: Pid = 0;
+pub const POWERSAVE_PID: Pid = 0;
 
 const FREE_MMAP_START_ADDRESS: usize = 0x2000000000;
 
@@ -80,19 +80,22 @@ impl Debug for Process {
 }
 
 impl Process {
-    pub fn never() -> Self {
+    pub fn powersave() -> Self {
+        extern "C" {
+            fn powersave();
+        }
         Self {
-            name: "never".to_string(),
-            pid: NEVER_PID,
+            name: "powersave".to_string(),
+            pid: POWERSAVE_PID,
             register_state: TrapFrame::zero(),
-            page_table: RootPageTableHolder::invalid(),
-            program_counter: 0,
+            page_table: RootPageTableHolder::new_with_kernel_mapping(),
+            program_counter: powersave as usize,
             allocated_pages: Vec::new(),
-            state: ProcessState::Waiting,
+            state: ProcessState::Runnable,
             free_mmap_address: FREE_MMAP_START_ADDRESS,
             next_free_descriptor: 0,
             open_udp_sockets: BTreeMap::new(),
-            in_kernel_mode: false,
+            in_kernel_mode: true,
             notify_on_die: BTreeSet::new(),
         }
     }
@@ -108,7 +111,7 @@ impl Process {
             pages.as_ptr() as usize,
             PAGE_SIZE * number_of_pages,
             crate::memory::page_tables::XWRMode::ReadWrite,
-            "Heap",
+            "Heap".to_string(),
         );
         self.allocated_pages.push(pages);
         let ptr = core::ptr::without_provenance_mut(self.free_mmap_address);

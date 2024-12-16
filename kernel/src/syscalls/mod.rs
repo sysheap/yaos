@@ -19,7 +19,7 @@ use crate::{
     net::{udp::UdpHeader, ARP_CACHE, OPEN_UDP_SOCKETS},
     print, println,
     processes::{
-        process::{Pid, ProcessState, NEVER_PID},
+        process::{Pid, ProcessState},
         process_table::ProcessRef,
         scheduler::{self},
     },
@@ -78,11 +78,12 @@ impl KernelSyscalls for SyscallHandler {
     fn sys_exit(&mut self, status: UserspaceArgument<isize>) {
         // We don't want to overwrite the next process trap frame
         self.process_exit = true;
-        self.current_process = scheduler::THE.lock().get_dummy_process();
-        self.current_pid = NEVER_PID;
 
         debug!("Exit process with status: {}\n", status.validate());
         scheduler::THE.lock().kill_current_process();
+
+        self.current_process = scheduler::THE.lock().get_current_process().clone();
+        self.current_pid = self.current_process.lock().get_pid();
     }
 
     fn sys_execute(

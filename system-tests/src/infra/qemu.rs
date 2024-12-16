@@ -29,6 +29,7 @@ impl QemuOptions {
         if self.add_network_card {
             command.arg("--net");
         }
+        command.arg("--log");
     }
 }
 

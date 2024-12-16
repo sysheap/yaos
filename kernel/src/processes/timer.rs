@@ -29,14 +29,6 @@ pub fn set_timer(milliseconds: u64) {
     cpu::enable_timer_interrupt();
 }
 
-pub fn disable_timer() {
-    debug!("disabling timer");
-    cpu::disable_timer_interrupt();
-    // Somehow u64::MAX triggers timer interrupt indefinitely
-    // u64::MAX - 1 works as intended.
-    sbi::extensions::timer_extension::sbi_set_timer(u64::MAX - 1).assert_success();
-}
-
 fn get_current_clocks() -> u64 {
     let current: u64;
     unsafe {

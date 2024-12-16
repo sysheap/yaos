@@ -63,8 +63,15 @@ asm_\func:
 	
 	save_regs
 
-	# Load kernel stack frame
-	la sp, __stop_kernel_stack
+	# Load kernel page tables such that we get the correct stack
+	csrr t0, sscratch
+	ld t1, 0x200(t0)
+	csrw satp, t1
+	sfence.vma zero, zero
+
+	# Set kernel stack pointer to 0xffffffffffffffff
+	li sp, 0
+	addi sp, sp, -64
 
 	csrr a0, scause
 	csrr a1, stval
@@ -72,6 +79,11 @@ asm_\func:
 	csrr a3, sscratch
 	call \func
 
+	# Restore the process page table
+	call get_process_satp_value
+	csrw satp, a0
+	sfence.vma
+	
 	restore_regs
 
 	sret

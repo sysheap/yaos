@@ -1,6 +1,16 @@
+use alloc::boxed::Box;
 use core::arch::asm;
 
 use common::syscalls::trap_frame::TrapFrame;
+
+use crate::{
+    klibc::sizes::KiB,
+    memory::page_tables::{
+        activate_page_table, get_satp_value_from_page_tables, RootPageTableHolder,
+    },
+};
+
+const KERNEL_STACK_SIZE: usize = KiB(512);
 
 // We need to make sure that the trap frame is the first member
 // We store a pointer to his structure in sscratch and on an interrupt
@@ -9,15 +19,50 @@ use common::syscalls::trap_frame::TrapFrame;
 #[repr(C)]
 pub struct PerCpuData {
     pub trap_frame: TrapFrame,
+    kernel_page_tables_satp_value: usize, // We access this value in assembly, so don't move it
     pub cpu_id: u64,
+    kernel_stack: *mut u8,
+    page_tables: RootPageTableHolder,
 }
 
 impl PerCpuData {
     pub fn new(cpu_id: u64) -> Self {
+        let kernel_stack =
+            Box::into_raw(vec![0u8; KERNEL_STACK_SIZE].into_boxed_slice()) as *mut u8;
+        let mut page_tables = RootPageTableHolder::new_with_kernel_mapping();
+
+        let stack_start_virtual = (0usize).wrapping_sub(KERNEL_STACK_SIZE);
+
+        page_tables.map(
+            stack_start_virtual,
+            kernel_stack as usize,
+            KERNEL_STACK_SIZE,
+            crate::memory::page_tables::XWRMode::ReadWrite,
+            false,
+            format!("KERNEL_STACK CPU {cpu_id}"),
+        );
+
+        let satp_value = get_satp_value_from_page_tables(&page_tables);
+
         Self {
             trap_frame: TrapFrame::zero(),
+            kernel_page_tables_satp_value: satp_value,
             cpu_id,
+            kernel_stack,
+            page_tables,
         }
+    }
+
+    pub fn cpu_id() -> u64 {
+        unsafe { (*get_per_cpu_data()).cpu_id }
+    }
+
+    pub fn get_kernel_page_table() -> &'static RootPageTableHolder {
+        unsafe { &(*get_per_cpu_data()).page_tables }
+    }
+
+    pub fn activate_kernel_page_table() {
+        activate_page_table(Self::get_kernel_page_table());
     }
 
     pub fn write_trap_frame(trap_frame: &TrapFrame) {
@@ -104,15 +149,6 @@ pub fn is_timer_enabled() -> bool {
     let sie: usize;
     unsafe { asm!("csrr {}, sie", out(reg) sie) }
     (sie & (1 << SIE_STIE)) > 0
-}
-
-pub fn disable_timer_interrupt() {
-    unsafe {
-        asm!("
-                csrc sie, {}
-            ", in(reg) (1 << SIE_STIE)
-        )
-    }
 }
 
 pub fn enable_timer_interrupt() {

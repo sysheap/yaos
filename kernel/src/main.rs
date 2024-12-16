@@ -27,6 +27,7 @@ use crate::{
     processes::{scheduler, timer},
 };
 use alloc::vec::Vec;
+use cpu::PerCpuData;
 use debugging::{backtrace, symbols};
 use device_tree::get_devicetree_range;
 use memory::page_tables::MappingDescription;
@@ -115,13 +116,13 @@ extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) {
 
     memory::initialize_runtime_mappings(&runtime_mapping);
 
-    page_tables::activate_page_table(&page_tables::KERNEL_PAGE_TABLES);
-
-    plic::init_uart_interrupt(hart_id);
-
     scheduler::init(num_cpus);
 
     cpu::write_sscratch_register(scheduler::THE.lock().get_per_cpu_data_ptr(hart_id));
+
+    PerCpuData::activate_kernel_page_table();
+
+    plic::init_uart_interrupt(hart_id);
 
     let mut pci_devices = enumerate_devices(&pci_information);
 

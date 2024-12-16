@@ -1,19 +1,26 @@
 use super::trap_cause::{exception::ENVIRONMENT_CALL_FROM_U_MODE, InterruptCause};
 use crate::{
-    cpu::{self},
+    cpu::{self, PerCpuData},
     debug,
     interrupts::plic::{self, InterruptSource},
     io::{stdin_buf::STDIN_BUFFER, uart},
-    memory::linker_information::LinkerInformation,
+    memory::page_tables::get_satp_value_from_page_tables,
     processes::{
         process::ProcessState,
         scheduler::{self},
     },
     syscalls::{self},
-    warn,
 };
-use common::syscalls::trap_frame::{Register, TrapFrame};
+use common::syscalls::trap_frame::Register;
 use core::panic;
+
+#[no_mangle]
+extern "C" fn get_process_satp_value() -> usize {
+    scheduler::THE.with_lock(|s| {
+        s.get_current_process()
+            .with_lock(|p| get_satp_value_from_page_tables(p.get_page_table()))
+    })
+}
 
 #[no_mangle]
 extern "C" fn handle_timer_interrupt() {
@@ -40,7 +47,8 @@ fn handle_external_interrupt() {
     }
 }
 
-fn handle_syscall(sepc: usize, trap_frame: &mut TrapFrame) {
+fn handle_syscall(sepc: usize, per_cpu_data: &mut PerCpuData) {
+    let trap_frame = &mut per_cpu_data.trap_frame;
     let nr = trap_frame[Register::a0];
     let arg1 = trap_frame[Register::a1];
     let arg2 = trap_frame[Register::a2];
@@ -59,22 +67,11 @@ fn handle_syscall(sepc: usize, trap_frame: &mut TrapFrame) {
     });
 }
 
-fn warn_on_stackoverflow(cause: InterruptCause, stval: usize) {
-    if cause.is_stack_overflow(stval) {
-        let guard_range = LinkerInformation::__start_stack_overflow_guard()
-            ..LinkerInformation::__start_kernel_stack();
-        warn!(
-            "DANGER! STACK OVERFLOW DETECTED! stval={:p} inside guard page {:p}-{:p}",
-            stval as *const (), guard_range.start as *const (), guard_range.end as *const ()
-        );
-    }
-}
-
 fn handle_unhandled_exception(
     cause: InterruptCause,
     stval: usize,
     sepc: usize,
-    trap_frame: &mut TrapFrame,
+    per_cpu_data: &mut PerCpuData,
 ) {
     let message= scheduler::THE.lock().get_current_process().with_lock(|p| {
         format!(
@@ -85,7 +82,7 @@ fn handle_unhandled_exception(
             sepc,
             p.get_page_table().is_userspace_address(sepc),
             p.get_name(),
-            trap_frame
+            per_cpu_data.trap_frame
         )
     });
     panic!("{}", message);
@@ -96,12 +93,11 @@ extern "C" fn handle_exception(
     cause: InterruptCause,
     stval: usize,
     sepc: usize,
-    trap_frame: &mut TrapFrame,
+    per_cpu_data: &mut PerCpuData,
 ) {
-    warn_on_stackoverflow(cause, stval);
     match cause.get_exception_code() {
-        ENVIRONMENT_CALL_FROM_U_MODE => handle_syscall(sepc, trap_frame),
-        _ => handle_unhandled_exception(cause, stval, sepc, trap_frame),
+        ENVIRONMENT_CALL_FROM_U_MODE => handle_syscall(sepc, per_cpu_data),
+        _ => handle_unhandled_exception(cause, stval, sepc, per_cpu_data),
     }
 }
 
@@ -110,7 +106,7 @@ extern "C" fn handle_unimplemented(
     cause: InterruptCause,
     _stval: usize,
     sepc: usize,
-    _trap_frame: &mut TrapFrame,
+    _trap_frame: &mut PerCpuData,
 ) {
     panic!(
         "Unimplemeneted trap occurred! (sepc: {:x?}) (cause: {:?})",

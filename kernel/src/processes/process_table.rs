@@ -3,21 +3,21 @@ use common::mutex::Mutex;
 
 use crate::{debug, info};
 
-use super::process::{Pid, Process, ProcessState, NEVER_PID};
+use super::process::{Pid, Process, ProcessState, POWERSAVE_PID};
 
 pub type ProcessRef = Arc<Mutex<Process>>;
 
 pub struct ProcessTable {
     processes: BTreeMap<Pid, ProcessRef>,
+    powersave_process: ProcessRef,
 }
 
 impl ProcessTable {
     pub fn new() -> Self {
-        let mut self_ = Self {
+        Self {
             processes: BTreeMap::new(),
-        };
-        self_.add_process(Process::never());
-        self_
+            powersave_process: Arc::new(Mutex::new(Process::powersave())),
+        }
     }
 
     pub fn add_process(&mut self, process: Process) {
@@ -26,9 +26,7 @@ impl ProcessTable {
     }
 
     pub fn is_empty(&self) -> bool {
-        // If only the never process is left
-        // we know the process table is empty
-        self.processes.len() == 1
+        self.processes.is_empty()
     }
 
     pub fn get_highest_pid_without(&self, process_names: &[&str]) -> Option<Pid> {
@@ -37,7 +35,7 @@ impl ProcessTable {
             .max_by_key(|(pid, _)| *pid)
             .filter(|(_, p)| {
                 let p = p.lock();
-                !process_names.iter().any(|n| p.get_name() == *n) && p.get_pid() != NEVER_PID
+                !process_names.iter().any(|n| p.get_name() == *n) && p.get_pid() != POWERSAVE_PID
             })
             .map(|(pid, _)| *pid)
     }
@@ -46,33 +44,29 @@ impl ProcessTable {
         for (pid, process) in &self.processes {
             let process = process.lock();
             info!(
-                "PID={} NAME={} STATE={:?}",
+                "PID={} NAME={} STATE={:?} pc={:#x}",
                 *pid,
                 process.get_name(),
-                process.get_state()
+                process.get_state(),
+                process.get_program_counter()
             );
         }
     }
 
     pub fn kill(&mut self, pid: Pid) {
         assert!(
-            pid != NEVER_PID,
+            pid != POWERSAVE_PID,
             "We are not allowed to kill the never process"
         );
         debug!("Removing pid={pid} from process table");
         if let Some(process) = self.processes.remove(&pid) {
-            assert_eq!(
-                Arc::strong_count(&process),
-                1,
-                "There should no more than one process handles be active"
-            );
             for pid in process.lock().get_notifies_on_die() {
                 self.wake_process_up(*pid);
             }
         }
     }
 
-    pub fn next_runnable(&self, old_pid: Pid) -> Option<ProcessRef> {
+    pub fn next_runnable(&self, old_pid: Pid) -> ProcessRef {
         let mut next_iter = self
             .processes
             .range(old_pid..)
@@ -80,13 +74,14 @@ impl ProcessTable {
             .filter_map(Self::filter_map_runnable_processes);
 
         if let Some(next_process) = next_iter.next() {
-            Some(next_process.clone())
+            next_process.clone()
         } else {
             self.processes
                 .iter()
                 .filter_map(Self::filter_map_runnable_processes)
                 .next()
                 .cloned()
+                .unwrap_or(self.get_powersave_process())
         }
     }
 
@@ -102,11 +97,8 @@ impl ProcessTable {
         self.processes.get(&pid)
     }
 
-    pub fn get_dummy_process(&self) -> ProcessRef {
-        self.processes
-            .get(&NEVER_PID)
-            .expect("The dummy process must always exist")
-            .clone()
+    pub fn get_powersave_process(&self) -> ProcessRef {
+        self.powersave_process.clone()
     }
 
     pub fn wake_process_up(&self, pid: Pid) {

@@ -1,17 +1,20 @@
 use core::{
-    cell::LazyCell,
     fmt::{Debug, Display},
-    ops::{Deref, Range},
+    ops::Range,
     ptr::null_mut,
 };
 
-use alloc::{boxed::Box, vec::Vec};
-use common::{mutex::Mutex, util::align_up};
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
+use common::util::align_up;
 
 use crate::{
     assert::static_assert_size,
     cpu::{read_satp, write_satp_and_fence},
-    debug, debugging, info,
+    debug, debugging,
     interrupts::plic,
     io::TEST_DEVICE_ADDRESSS,
     klibc::{
@@ -36,46 +39,16 @@ pub struct MappingDescription {
     pub name: &'static str,
 }
 
-pub static KERNEL_PAGE_TABLES: LazyStaticKernelPageTables = LazyStaticKernelPageTables::new();
-
-pub struct LazyStaticKernelPageTables {
-    inner: Mutex<LazyCell<&'static RootPageTableHolder>>,
-}
-
-impl LazyStaticKernelPageTables {
-    const fn new() -> Self {
-        Self {
-            inner: Mutex::new(LazyCell::new(|| {
-                let page_tables = Box::new(RootPageTableHolder::new_with_kernel_mapping());
-                info!("Initialized kernel {}", &*page_tables);
-                Box::leak(page_tables)
-            })),
-        }
-    }
-}
-
-impl Deref for LazyStaticKernelPageTables {
-    type Target = RootPageTableHolder;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner.lock()
-    }
-}
-
-// SAFETY: Inner type is wrapped within a mutex. So we can make this sync.
-// Somehow it didn't worked to make this Send only. I guess some problems by using LazyCell.
-unsafe impl Sync for LazyStaticKernelPageTables {}
-
 /// Keeps track of already mapped virtual address ranges
 /// We use that to prevent of overlapping mapping
 struct MappingEntry {
     virtual_range: core::ops::Range<usize>,
-    name: &'static str,
+    name: String,
     privileges: XWRMode,
 }
 
 impl MappingEntry {
-    fn new(virtual_range: Range<usize>, name: &'static str, privileges: XWRMode) -> Self {
+    fn new(virtual_range: Range<usize>, name: String, privileges: XWRMode) -> Self {
         Self {
             virtual_range,
             name,
@@ -90,13 +63,12 @@ impl MappingEntry {
 
 impl Display for MappingEntry {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let shown_end = self.virtual_range.end + PAGE_SIZE;
         write!(
             f,
             "{:#018x}-{:#018x} (Size: {:#010x}) ({:?})\t({})",
             self.virtual_range.start,
-            shown_end,
-            shown_end - self.virtual_range.start,
+            self.virtual_range.end,
+            self.virtual_range.end - self.virtual_range.start,
             self.privileges,
             self.name
         )
@@ -163,13 +135,6 @@ impl RootPageTableHolder {
         }
     }
 
-    pub const fn invalid() -> Self {
-        Self {
-            root_table: null_mut(),
-            already_mapped: Vec::new(),
-        }
-    }
-
     fn table(&self) -> &PageTable {
         // SAFETY: It is always allocated
         unsafe { &*self.root_table }
@@ -202,7 +167,7 @@ impl RootPageTableHolder {
                 mapping.virtual_address_start,
                 mapping.size,
                 mapping.privileges,
-                mapping.name,
+                mapping.name.to_string(),
             );
         }
 
@@ -210,35 +175,35 @@ impl RootPageTableHolder {
             LinkerInformation::__start_symbols(),
             debugging::symbols::symbols_size(),
             XWRMode::ReadOnly,
-            "SYMBOLS",
+            "SYMBOLS".to_string(),
         );
 
         root_page_table_holder.map_identity_kernel(
             LinkerInformation::__start_heap(),
             heap_size(),
             XWRMode::ReadWrite,
-            "HEAP",
+            "HEAP".to_string(),
         );
 
         root_page_table_holder.map_identity_kernel(
             plic::PLIC_BASE,
             plic::PLIC_SIZE,
             XWRMode::ReadWrite,
-            "PLIC",
+            "PLIC".to_string(),
         );
 
         root_page_table_holder.map_identity_kernel(
             timer::CLINT_BASE,
             timer::CLINT_SIZE,
             XWRMode::ReadWrite,
-            "CLINT",
+            "CLINT".to_string(),
         );
 
         root_page_table_holder.map_identity_kernel(
             TEST_DEVICE_ADDRESSS,
             PAGE_SIZE,
             XWRMode::ReadWrite,
-            "Qemu Test Device",
+            "Qemu Test Device".to_string(),
         );
 
         for runtime_mapping in get_runtime_mappings() {
@@ -246,7 +211,7 @@ impl RootPageTableHolder {
                 runtime_mapping.virtual_address_start,
                 runtime_mapping.size,
                 runtime_mapping.privileges,
-                runtime_mapping.name,
+                runtime_mapping.name.to_string(),
             );
         }
 
@@ -259,7 +224,7 @@ impl RootPageTableHolder {
         physical_address_start: usize,
         size: usize,
         privileges: XWRMode,
-        name: &'static str,
+        name: String,
     ) {
         self.map(
             virtual_address_start,
@@ -296,14 +261,14 @@ impl RootPageTableHolder {
         Some(third_level_entry)
     }
 
-    fn map(
+    pub fn map(
         &mut self,
         virtual_address_start: usize,
         physical_address_start: usize,
         mut size: usize,
         privileges: XWRMode,
         is_user_mode_accessible: bool,
-        name: &'static str,
+        name: String,
     ) {
         assert_eq!(virtual_address_start % PAGE_SIZE, 0);
         assert_eq!(physical_address_start % PAGE_SIZE, 0);
@@ -314,8 +279,8 @@ impl RootPageTableHolder {
 
         size = align_up(size, PAGE_SIZE);
 
-        let virtual_end = virtual_address_start - PAGE_SIZE + size;
-        let physical_end = physical_address_start - PAGE_SIZE + size;
+        let virtual_end = virtual_address_start.wrapping_add(size - 1);
+        let physical_end = physical_address_start.wrapping_add(size - 1);
 
         debug!(
             "Map \t{:#018x}-{:#018x} -> {:#018x}-{:#018x} (Size: {:#010x}) ({:?})\t({})",
@@ -456,7 +421,7 @@ impl RootPageTableHolder {
         virtual_address_start: usize,
         size: usize,
         privileges: XWRMode,
-        name: &'static str,
+        name: String,
     ) {
         self.map_identity(virtual_address_start, size, privileges, false, name);
     }
@@ -467,7 +432,7 @@ impl RootPageTableHolder {
         size: usize,
         privileges: XWRMode,
         is_user_mode_accessible: bool,
-        name: &'static str,
+        name: String,
     ) {
         self.map(
             virtual_address_start,
@@ -655,6 +620,14 @@ impl PageTableEntry {
     }
 }
 
+pub fn get_satp_value_from_page_tables(page_tables: &RootPageTableHolder) -> usize {
+    let page_table_address = page_tables.table().get_physical_address();
+
+    let page_table_address_shifted = page_table_address >> 12;
+
+    8 << 60 | (page_table_address_shifted & 0xfffffffffff)
+}
+
 pub fn activate_page_table(page_table_holder: &RootPageTableHolder) {
     let page_table_address = page_table_holder.table().get_physical_address();
 
@@ -662,9 +635,8 @@ pub fn activate_page_table(page_table_holder: &RootPageTableHolder) {
         "Activate new page mapping (Addr of page tables 0x{:x})",
         page_table_address
     );
-    let page_table_address_shifted = page_table_address >> 12;
 
-    let satp_val = 8 << 60 | (page_table_address_shifted & 0xfffffffffff);
+    let satp_val = get_satp_value_from_page_tables(page_table_holder);
 
     unsafe {
         write_satp_and_fence(satp_val);
@@ -674,10 +646,17 @@ pub fn activate_page_table(page_table_holder: &RootPageTableHolder) {
 #[cfg(test)]
 mod tests {
     use super::RootPageTableHolder;
+    use alloc::string::ToString;
 
     #[test_case]
     fn check_drop_of_page_table_holder() {
         let mut page_table = RootPageTableHolder::empty();
-        page_table.map_userspace(0x1000, 0x2000, 0x3000, super::XWRMode::ReadOnly, "Test");
+        page_table.map_userspace(
+            0x1000,
+            0x2000,
+            0x3000,
+            super::XWRMode::ReadOnly,
+            "Test".to_string(),
+        );
     }
 }
