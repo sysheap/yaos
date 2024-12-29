@@ -29,7 +29,7 @@ impl StdinBuffer {
 
     pub fn push(&mut self, byte: u8) {
         let notified = !self.wakeup_queue.is_empty();
-        scheduler::THE.with_lock(|s| {
+        scheduler::THE.with_lock(|mut s| {
             for pid in &self.wakeup_queue {
                 if let Some(process) = s.get_process(*pid) {
                     process.with_lock(|mut p| {
@@ -37,6 +37,9 @@ impl StdinBuffer {
                         p.set_syscall_return_code(byte as usize);
                     })
                 }
+            }
+            if notified && s.is_current_process_energy_saver() {
+                s.schedule();
             }
         });
         self.wakeup_queue.clear();

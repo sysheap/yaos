@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use core::cell::UnsafeCell;
 
 use common::mutex::Mutex;
@@ -60,6 +60,13 @@ impl Scheduler {
 
     pub fn get_current_process(&self) -> &ProcessRef {
         &self.current_process
+    }
+
+    pub fn is_current_process_energy_saver(&self) -> bool {
+        Arc::ptr_eq(
+            self.get_current_process(),
+            &self.process_table.get_powersave_process(),
+        )
     }
 
     pub fn get_process(&self, pid: Pid) -> Option<&ProcessRef> {
