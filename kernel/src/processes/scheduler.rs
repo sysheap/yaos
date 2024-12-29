@@ -1,4 +1,4 @@
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{boxed::Box, sync::Arc};
 use core::cell::UnsafeCell;
 
 use common::mutex::Mutex;
@@ -26,7 +26,7 @@ pub fn init(num_cpus: u64) {
 pub struct Scheduler {
     process_table: ProcessTable,
     current_process: ProcessRef,
-    per_cpu_data: Vec<UnsafeCell<PerCpuData>>,
+    per_cpu_data: Box<[UnsafeCell<PerCpuData>]>,
 }
 
 impl Scheduler {
