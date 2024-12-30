@@ -27,11 +27,17 @@ pub mod exception {
 use exception::*;
 use interrupt::*;
 
+use crate::cpu;
+
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct InterruptCause(usize);
 
 impl InterruptCause {
+    pub fn from_scause() -> Self {
+        Self(cpu::read_scause())
+    }
+
     pub fn is_interrupt(&self) -> bool {
         self.0 >> 63 == 1
     }

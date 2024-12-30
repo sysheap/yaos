@@ -1,5 +1,9 @@
 use alloc::boxed::Box;
-use core::arch::asm;
+use core::{
+    arch::asm,
+    cell::Cell,
+    ops::{Deref, DerefMut},
+};
 
 use common::syscalls::trap_frame::TrapFrame;
 
@@ -17,15 +21,16 @@ const KERNEL_STACK_SIZE: usize = KiB(512);
 // we're saving the context to the trap_frame, assuming it lies at offset
 // 0x0 of the struct.
 #[repr(C)]
-pub struct PerCpuData {
-    pub trap_frame: TrapFrame,
+pub struct Cpu {
+    trap_frame: TrapFrame,
     kernel_page_tables_satp_value: usize, // We access this value in assembly, so don't move it
-    pub cpu_id: u64,
+    cpu_id: u64,
     kernel_stack: *mut u8,
-    page_tables: RootPageTableHolder,
+    kernel_page_tables: RootPageTableHolder,
+    mutable_reference_alive: Cell<bool>,
 }
 
-impl PerCpuData {
+impl Cpu {
     pub fn new(cpu_id: u64) -> Self {
         let kernel_stack =
             Box::into_raw(vec![0u8; KERNEL_STACK_SIZE].into_boxed_slice()) as *mut u8;
@@ -49,39 +54,58 @@ impl PerCpuData {
             kernel_page_tables_satp_value: satp_value,
             cpu_id,
             kernel_stack,
-            page_tables,
+            kernel_page_tables: page_tables,
+            mutable_reference_alive: Cell::new(false),
         }
     }
 
-    pub fn cpu_id() -> u64 {
-        unsafe { (*get_per_cpu_data()).cpu_id }
+    pub fn current() -> CpuRefHolder {
+        let ptr = get_per_cpu_data();
+        // SAFETY: The pointer points to a static and is therefore always valid.
+        let mutable_reference_alive = unsafe { &(*ptr).mutable_reference_alive };
+        let old = mutable_reference_alive.replace(true);
+        assert!(
+            !old,
+            "There must be only one valid mutable reference to the current cpu struct."
+        );
+        // SAFETY: The pointer points to a static and is therefore always valid.
+        unsafe { CpuRefHolder(&mut *ptr) }
     }
 
-    pub fn get_kernel_page_table() -> &'static RootPageTableHolder {
-        unsafe { &(*get_per_cpu_data()).page_tables }
+    pub unsafe fn current_nevertheless() -> CpuRefHolder {
+        let ptr = get_per_cpu_data();
+        unsafe { CpuRefHolder(&mut *ptr) }
     }
 
-    pub fn activate_kernel_page_table() {
-        activate_page_table(Self::get_kernel_page_table());
+    pub fn cpu_id(&self) -> u64 {
+        self.cpu_id
     }
 
-    pub fn write_trap_frame(trap_frame: &TrapFrame) {
-        unsafe { (*get_per_cpu_data()).trap_frame = *trap_frame };
+    pub fn activate_kernel_page_table(&self) {
+        activate_page_table(&self.kernel_page_tables);
     }
 
-    pub fn read_trap_frame() -> TrapFrame {
-        unsafe { (*get_per_cpu_data()).trap_frame }
+    pub fn kernel_page_table(&self) -> &RootPageTableHolder {
+        &self.kernel_page_tables
+    }
+
+    pub fn trap_frame_mut(&mut self) -> &mut TrapFrame {
+        &mut self.trap_frame
+    }
+
+    pub fn trap_frame(&self) -> &TrapFrame {
+        &self.trap_frame
     }
 }
 
-pub fn write_sscratch_register(value: *const PerCpuData) {
+pub fn write_sscratch_register(value: *const Cpu) {
     unsafe {
         asm!("csrw sscratch, {}", in(reg) value);
     }
 }
 
-pub fn get_per_cpu_data() -> *mut PerCpuData {
-    let ptr: *mut PerCpuData;
+pub fn get_per_cpu_data() -> *mut Cpu {
+    let ptr: *mut Cpu;
     unsafe {
         asm!("csrr {}, sscratch", out(reg) ptr);
     }
@@ -100,6 +124,22 @@ pub fn read_sepc() -> usize {
         asm!("csrr {}, sepc", out(reg) sepc);
     }
     sepc
+}
+
+pub fn read_scause() -> usize {
+    let scause: usize;
+    unsafe {
+        asm!("csrr {}, scause", out(reg) scause);
+    }
+    scause
+}
+
+pub fn read_stval() -> usize {
+    let stval: usize;
+    unsafe {
+        asm!("csrr {}, stval", out(reg) stval);
+    }
+    stval
 }
 
 pub unsafe fn write_satp_and_fence(satp_val: usize) {
@@ -191,5 +231,27 @@ pub fn set_ret_to_kernel_mode(kernel_mode: bool) {
         unsafe {
             asm!("csrc sstatus, {}", in(reg) (1<<SSTATUS_SPP));
         }
+    }
+}
+
+pub struct CpuRefHolder(&'static mut Cpu);
+
+impl Drop for CpuRefHolder {
+    fn drop(&mut self) {
+        self.0.mutable_reference_alive.set(false);
+    }
+}
+
+impl Deref for CpuRefHolder {
+    type Target = Cpu;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl DerefMut for CpuRefHolder {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
     }
 }

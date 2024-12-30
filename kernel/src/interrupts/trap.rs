@@ -1,6 +1,6 @@
 use super::trap_cause::{exception::ENVIRONMENT_CALL_FROM_U_MODE, InterruptCause};
 use crate::{
-    cpu::{self, PerCpuData},
+    cpu::{self, Cpu},
     debug,
     interrupts::plic::{self, InterruptSource},
     io::{stdin_buf::STDIN_BUFFER, uart},
@@ -47,17 +47,25 @@ fn handle_external_interrupt() {
     }
 }
 
-fn handle_syscall(sepc: usize, per_cpu_data: &mut PerCpuData) {
-    let trap_frame = &mut per_cpu_data.trap_frame;
+fn handle_syscall() {
+    let cpu = Cpu::current();
+
+    let trap_frame = cpu.trap_frame();
     let nr = trap_frame[Register::a0];
     let arg1 = trap_frame[Register::a1];
     let arg2 = trap_frame[Register::a2];
     let arg3 = trap_frame[Register::a3];
+
+    // We might need to get the current cpu again in handle_syscall
+    drop(cpu);
+
     let ret = syscalls::handle_syscall(nr, arg1, arg2, arg3);
     if let Some((ret1, ret2)) = ret {
+        let mut cpu = Cpu::current();
+        let trap_frame = cpu.trap_frame_mut();
         trap_frame[Register::a0] = ret1;
         trap_frame[Register::a1] = ret2;
-        cpu::write_sepc(sepc + 4); // Skip the ecall instruction
+        cpu::write_sepc(cpu::read_sepc() + 4); // Skip the ecall instruction
     }
     // In case our current process was set to waiting state we need to reschedule
     scheduler::THE.with_lock(|mut s| {
@@ -67,12 +75,11 @@ fn handle_syscall(sepc: usize, per_cpu_data: &mut PerCpuData) {
     });
 }
 
-fn handle_unhandled_exception(
-    cause: InterruptCause,
-    stval: usize,
-    sepc: usize,
-    per_cpu_data: &mut PerCpuData,
-) {
+fn handle_unhandled_exception() {
+    let cause = InterruptCause::from_scause();
+    let stval = cpu::read_stval();
+    let sepc = cpu::read_sepc();
+    let cpu = Cpu::current();
     let message= scheduler::THE.lock().get_current_process().with_lock(|p| {
         format!(
             "Unhandled exception!\nName: {}\nException code: {}\nstval: 0x{:x}\nsepc: 0x{:x}\nFrom Userspace: {}\nProcess name: {}\nTrap Frame: {:?}",
@@ -82,32 +89,25 @@ fn handle_unhandled_exception(
             sepc,
             p.get_page_table().is_userspace_address(sepc),
             p.get_name(),
-            per_cpu_data.trap_frame
+            cpu.trap_frame()
         )
     });
     panic!("{}", message);
 }
 
 #[no_mangle]
-extern "C" fn handle_exception(
-    cause: InterruptCause,
-    stval: usize,
-    sepc: usize,
-    per_cpu_data: &mut PerCpuData,
-) {
+extern "C" fn handle_exception() {
+    let cause = InterruptCause::from_scause();
     match cause.get_exception_code() {
-        ENVIRONMENT_CALL_FROM_U_MODE => handle_syscall(sepc, per_cpu_data),
-        _ => handle_unhandled_exception(cause, stval, sepc, per_cpu_data),
+        ENVIRONMENT_CALL_FROM_U_MODE => handle_syscall(),
+        _ => handle_unhandled_exception(),
     }
 }
 
 #[no_mangle]
-extern "C" fn handle_unimplemented(
-    cause: InterruptCause,
-    _stval: usize,
-    sepc: usize,
-    _trap_frame: &mut PerCpuData,
-) {
+extern "C" fn handle_unimplemented() {
+    let sepc = cpu::read_sepc();
+    let cause = InterruptCause::from_scause();
     panic!(
         "Unimplemeneted trap occurred! (sepc: {:x?}) (cause: {:?})",
         sepc,

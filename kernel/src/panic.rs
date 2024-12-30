@@ -10,7 +10,7 @@ static PANIC_COUNTER: AtomicU8 = AtomicU8::new(0);
 #[cfg(not(miri))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    use crate::cpu::PerCpuData;
+    use crate::cpu::Cpu;
 
     unsafe {
         crate::cpu::disable_global_interrupts();
@@ -24,13 +24,15 @@ fn panic(info: &PanicInfo) -> ! {
         QEMU_UART.disarm();
     }
 
+    let cpu = unsafe { Cpu::current_nevertheless() };
+
     println!("");
-    println!("KERNEL Panic Occured on cpu {}!", PerCpuData::cpu_id());
+    println!("KERNEL Panic Occured on cpu {}!", cpu.cpu_id());
     println!("Message: {}", info.message());
     if let Some(location) = info.location() {
         println!("Location: {}", location);
     }
-    println!("Kernel Page Tables {}", PerCpuData::get_kernel_page_table());
+    println!("Kernel Page Tables {}", cpu.kernel_page_table());
     abort_if_double_panic();
     crate::debugging::backtrace::print();
     crate::debugging::dump_current_state();

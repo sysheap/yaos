@@ -73,10 +73,6 @@ asm_\func:
 	li sp, 0
 	addi sp, sp, -64
 
-	csrr a0, scause
-	csrr a1, stval
-	csrr a2, sepc
-	csrr a3, sscratch
 	call \func
 
 	# Restore the process page table
