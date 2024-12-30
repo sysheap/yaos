@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 use core::{
     arch::asm,
     cell::Cell,
+    mem::offset_of,
     ops::{Deref, DerefMut},
 };
 
@@ -26,12 +27,23 @@ const SSTATUS_SPP: usize = 8;
 #[repr(C)]
 pub struct Cpu {
     trap_frame: TrapFrame,
-    kernel_page_tables_satp_value: usize, // We access this value in assembly, so don't move it
+    kernel_page_tables_satp_value: usize,
     cpu_id: usize,
     kernel_stack: *mut u8,
     kernel_page_tables: RootPageTableHolder,
     mutable_reference_alive: Cell<bool>,
 }
+
+const _: () = const {
+    assert!(
+        offset_of!(Cpu, trap_frame) == 0x0,
+        "trap_frame is accessed in trap.S. If offset is changed it must be changed there."
+    );
+    assert!(
+        offset_of!(Cpu, kernel_page_tables_satp_value) == 0x200,
+        "kernel_page_tables_satp_value is accessed in trap.S. If offset is changd it must be changed there."
+    );
+};
 
 macro_rules! read_csrr {
     ($name: ident) => {
