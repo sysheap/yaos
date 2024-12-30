@@ -13,7 +13,7 @@ fn panic(info: &PanicInfo) -> ! {
     use crate::cpu::Cpu;
 
     unsafe {
-        crate::cpu::disable_global_interrupts();
+        crate::Cpu::disable_global_interrupts();
     }
 
     // SAFTEY: The worst what happen is scrambled output

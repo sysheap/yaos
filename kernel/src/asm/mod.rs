@@ -13,3 +13,17 @@ pub fn asm_panic_rust() {
     }
     panic!("Panic from asm code (ra={ra:#x})");
 }
+
+#[unsafe(no_mangle)]
+#[naked]
+pub extern "C" fn wfi_loop() {
+    unsafe {
+        core::arch::naked_asm!(
+            "
+        0:
+            wfi
+            j 0
+        "
+        )
+    }
+}

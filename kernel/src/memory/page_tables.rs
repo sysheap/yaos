@@ -13,7 +13,7 @@ use common::util::align_up;
 
 use crate::{
     assert::static_assert_size,
-    cpu::{read_satp, write_satp_and_fence},
+    cpu::Cpu,
     debug, debugging,
     interrupts::plic,
     io::TEST_DEVICE_ADDRESSS,
@@ -146,7 +146,7 @@ impl RootPageTableHolder {
     }
 
     fn is_active(&self) -> bool {
-        let satp = read_satp();
+        let satp = Cpu::read_satp();
         let ppn = satp & 0xfffffffffff;
         let page_table_address = ppn << 12;
 
@@ -639,7 +639,7 @@ pub fn activate_page_table(page_table_holder: &RootPageTableHolder) {
     let satp_val = get_satp_value_from_page_tables(page_table_holder);
 
     unsafe {
-        write_satp_and_fence(satp_val);
+        Cpu::write_satp_and_fence(satp_val);
     };
 }
 

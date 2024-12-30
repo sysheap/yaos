@@ -1,6 +1,6 @@
 use super::trap_cause::{exception::ENVIRONMENT_CALL_FROM_U_MODE, InterruptCause};
 use crate::{
-    cpu::{self, Cpu},
+    cpu::Cpu,
     debug,
     interrupts::plic::{self, InterruptSource},
     io::{stdin_buf::STDIN_BUFFER, uart},
@@ -65,7 +65,7 @@ fn handle_syscall() {
         let trap_frame = cpu.trap_frame_mut();
         trap_frame[Register::a0] = ret1;
         trap_frame[Register::a1] = ret2;
-        cpu::write_sepc(cpu::read_sepc() + 4); // Skip the ecall instruction
+        Cpu::write_sepc(Cpu::read_sepc() + 4); // Skip the ecall instruction
     }
     // In case our current process was set to waiting state we need to reschedule
     scheduler::THE.with_lock(|mut s| {
@@ -77,8 +77,8 @@ fn handle_syscall() {
 
 fn handle_unhandled_exception() {
     let cause = InterruptCause::from_scause();
-    let stval = cpu::read_stval();
-    let sepc = cpu::read_sepc();
+    let stval = Cpu::read_stval();
+    let sepc = Cpu::read_sepc();
     let cpu = Cpu::current();
     let message= scheduler::THE.lock().get_current_process().with_lock(|p| {
         format!(
@@ -106,7 +106,7 @@ extern "C" fn handle_exception() {
 
 #[no_mangle]
 extern "C" fn handle_unimplemented() {
-    let sepc = cpu::read_sepc();
+    let sepc = Cpu::read_sepc();
     let cause = InterruptCause::from_scause();
     panic!(
         "Unimplemeneted trap occurred! (sepc: {:x?}) (cause: {:?})",

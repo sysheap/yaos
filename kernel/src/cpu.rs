@@ -16,6 +16,9 @@ use crate::{
 
 const KERNEL_STACK_SIZE: usize = KiB(512);
 
+const SIE_STIE: usize = 5;
+const SSTATUS_SPP: usize = 8;
+
 // We need to make sure that the trap frame is the first member
 // We store a pointer to his structure in sscratch and on an interrupt
 // we're saving the context to the trap_frame, assuming it lies at offset
@@ -30,7 +33,72 @@ pub struct Cpu {
     mutable_reference_alive: Cell<bool>,
 }
 
+macro_rules! read_csrr {
+    ($name: ident) => {
+        #[allow(dead_code)]
+        pub fn ${concat(read_, $name)}() -> usize {
+            if cfg!(miri) {
+                return 0;
+            }
+
+            let $name: usize;
+            unsafe {
+                asm!(concat!("csrr {}, ", stringify!($name)), out(reg) $name);
+            }
+            $name
+        }
+    };
+}
+
+macro_rules! write_csrr {
+    ($name: ident) => {
+        #[allow(dead_code)]
+        pub fn ${concat(write_, $name)}(value: usize)  {
+            if cfg!(miri) {
+                return ;
+            }
+            unsafe {
+                asm!(concat!("csrw ", stringify!($name), ", {}"), in(reg) value);
+            }
+        }
+
+        #[allow(dead_code)]
+        pub fn ${concat(csrs_, $name)}(mask: usize)  {
+            if cfg!(miri) {
+                return ;
+            }
+            unsafe {
+                asm!(concat!("csrs ", stringify!($name), ", {}"), in(reg) mask);
+            }
+        }
+
+        #[allow(dead_code)]
+        pub fn ${concat(csrc_, $name)}(mask: usize)  {
+            if cfg!(miri) {
+                return ;
+            }
+            unsafe {
+                asm!(concat!("csrc ", stringify!($name), ", {}"), in(reg) mask);
+            }
+        }
+    };
+}
+
 impl Cpu {
+    read_csrr!(satp);
+    read_csrr!(stval);
+    read_csrr!(sepc);
+    read_csrr!(scause);
+    read_csrr!(sscratch);
+    read_csrr!(sie);
+    read_csrr!(sstatus);
+
+    write_csrr!(satp);
+    write_csrr!(sepc);
+    write_csrr!(sscratch);
+    write_csrr!(sstatus);
+    write_csrr!(sie);
+
     pub fn init(cpu_id: usize) {
         let kernel_stack =
             Box::into_raw(vec![0u8; KERNEL_STACK_SIZE].into_boxed_slice()) as *mut u8;
@@ -60,11 +128,17 @@ impl Cpu {
 
         let static_cpu = Box::leak(cpu) as *mut Cpu;
 
-        write_sscratch_register(static_cpu);
+        Self::write_sscratch(static_cpu as usize);
+    }
+
+    fn get_per_cpu_data() -> *mut Self {
+        let ptr = Self::read_sscratch() as *mut Self;
+        assert!(!ptr.is_null() && ptr.is_aligned());
+        ptr
     }
 
     pub fn current() -> CpuRefHolder {
-        let ptr = get_per_cpu_data();
+        let ptr = Self::get_per_cpu_data();
         // SAFETY: The pointer points to a static and is therefore always valid.
         let mutable_reference_alive = unsafe { &(*ptr).mutable_reference_alive };
         let old = mutable_reference_alive.replace(true);
@@ -77,7 +151,7 @@ impl Cpu {
     }
 
     pub unsafe fn current_nevertheless() -> CpuRefHolder {
-        let ptr = get_per_cpu_data();
+        let ptr = Self::get_per_cpu_data();
         unsafe { CpuRefHolder(&mut *ptr) }
     }
 
@@ -100,140 +174,49 @@ impl Cpu {
     pub fn trap_frame(&self) -> &TrapFrame {
         &self.trap_frame
     }
-}
 
-pub fn write_sscratch_register(value: *const Cpu) {
-    unsafe {
-        asm!("csrw sscratch, {}", in(reg) value);
-    }
-}
-
-pub fn get_per_cpu_data() -> *mut Cpu {
-    let ptr: *mut Cpu;
-    unsafe {
-        asm!("csrr {}, sscratch", out(reg) ptr);
-    }
-    ptr
-}
-
-pub fn write_sepc(value: usize) {
-    unsafe {
-        asm!("csrw sepc, {}", in(reg) value);
-    }
-}
-
-pub fn read_sepc() -> usize {
-    let sepc: usize;
-    unsafe {
-        asm!("csrr {}, sepc", out(reg) sepc);
-    }
-    sepc
-}
-
-pub fn read_scause() -> usize {
-    let scause: usize;
-    unsafe {
-        asm!("csrr {}, scause", out(reg) scause);
-    }
-    scause
-}
-
-pub fn read_stval() -> usize {
-    let stval: usize;
-    unsafe {
-        asm!("csrr {}, stval", out(reg) stval);
-    }
-    stval
-}
-
-pub unsafe fn write_satp_and_fence(satp_val: usize) {
-    unsafe {
-        asm!("csrw satp, {}", in(reg) satp_val);
-        asm!("sfence.vma");
-    }
-}
-
-pub fn read_satp() -> usize {
-    if cfg!(miri) {
-        return 0;
-    }
-
-    let satp: usize;
-    unsafe {
-        asm!("csrr {}, satp", out(reg) satp);
-    }
-    satp
-}
-
-pub fn memory_fence() {
-    unsafe {
-        asm!("fence");
-    }
-}
-
-pub unsafe fn disable_global_interrupts() {
-    unsafe {
-        asm!(
-            "csrc sstatus, {}", // Disable global interrupt flag
-            "csrw sie, x0", // Clear any local enabled interrupts otherwise wfi just goes to the current pending interrupt
-        in(reg) 0b10);
-    }
-}
-
-pub fn wait_for_interrupt() {
-    unsafe {
-        asm!("wfi");
-    }
-}
-
-const SIE_STIE: usize = 5;
-const SSTATUS_SPP: usize = 8;
-
-pub fn is_timer_enabled() -> bool {
-    let sie: usize;
-    unsafe { asm!("csrr {}, sie", out(reg) sie) }
-    (sie & (1 << SIE_STIE)) > 0
-}
-
-pub fn enable_timer_interrupt() {
-    unsafe {
-        asm!("
-                csrs sie, {}
-            ", in(reg) (1 << SIE_STIE)
-        )
-    }
-}
-
-#[unsafe(no_mangle)]
-#[naked]
-pub extern "C" fn wfi_loop() {
-    unsafe {
-        core::arch::naked_asm!(
-            "
-        0:
-            wfi
-            j 0
-        "
-        )
-    }
-}
-
-pub fn is_in_kernel_mode() -> bool {
-    let value: usize;
-    unsafe {
-        asm!("csrr {0}, sstatus", out(reg) value);
-    }
-    (value & (1 << SSTATUS_SPP)) > 0
-}
-
-pub fn set_ret_to_kernel_mode(kernel_mode: bool) {
-    if kernel_mode {
+    pub unsafe fn write_satp_and_fence(satp_val: usize) {
+        Cpu::write_satp(satp_val);
         unsafe {
-            asm!("csrs sstatus, {}", in(reg) (1<<SSTATUS_SPP));
+            asm!("sfence.vma");
         }
-    } else {
+    }
+
+    pub fn memory_fence() {
         unsafe {
-            asm!("csrc sstatus, {}", in(reg) (1<<SSTATUS_SPP));
+            asm!("fence");
+        }
+    }
+
+    pub unsafe fn disable_global_interrupts() {
+        Self::csrc_sstatus(0b10);
+        Self::write_sie(0);
+    }
+
+    pub fn wait_for_interrupt() {
+        unsafe {
+            asm!("wfi");
+        }
+    }
+
+    pub fn is_timer_enabled() -> bool {
+        let sie = Self::read_sie();
+        (sie & (1 << SIE_STIE)) > 0
+    }
+
+    pub fn enable_timer_interrupt() {
+        Self::csrs_sie(1 << SIE_STIE);
+    }
+    pub fn is_in_kernel_mode() -> bool {
+        let sstatus = Self::read_sstatus();
+        (sstatus & (1 << SSTATUS_SPP)) > 0
+    }
+
+    pub fn set_ret_to_kernel_mode(kernel_mode: bool) {
+        if kernel_mode {
+            Self::csrs_sstatus(1 << SSTATUS_SPP);
+        } else {
+            Self::csrc_sstatus(1 << SSTATUS_SPP);
         }
     }
 }

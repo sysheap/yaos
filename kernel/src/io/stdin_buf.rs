@@ -1,5 +1,5 @@
 use crate::{
-    cpu,
+    cpu::Cpu,
     processes::{
         process::{Pid, ProcessState},
         scheduler, timer,
@@ -44,7 +44,7 @@ impl StdinBuffer {
         });
         self.wakeup_queue.clear();
         if notified {
-            if !cpu::is_timer_enabled() {
+            if !Cpu::is_timer_enabled() {
                 // Enable timer because we were sleeping and waiting
                 // for input
                 timer::set_timer(0);
