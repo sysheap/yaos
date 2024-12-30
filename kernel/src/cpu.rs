@@ -24,14 +24,14 @@ const KERNEL_STACK_SIZE: usize = KiB(512);
 pub struct Cpu {
     trap_frame: TrapFrame,
     kernel_page_tables_satp_value: usize, // We access this value in assembly, so don't move it
-    cpu_id: u64,
+    cpu_id: usize,
     kernel_stack: *mut u8,
     kernel_page_tables: RootPageTableHolder,
     mutable_reference_alive: Cell<bool>,
 }
 
 impl Cpu {
-    pub fn new(cpu_id: u64) -> Self {
+    pub fn init(cpu_id: usize) {
         let kernel_stack =
             Box::into_raw(vec![0u8; KERNEL_STACK_SIZE].into_boxed_slice()) as *mut u8;
         let mut page_tables = RootPageTableHolder::new_with_kernel_mapping();
@@ -49,14 +49,18 @@ impl Cpu {
 
         let satp_value = get_satp_value_from_page_tables(&page_tables);
 
-        Self {
+        let cpu = Box::new(Self {
             trap_frame: TrapFrame::zero(),
             kernel_page_tables_satp_value: satp_value,
             cpu_id,
             kernel_stack,
             kernel_page_tables: page_tables,
             mutable_reference_alive: Cell::new(false),
-        }
+        });
+
+        let static_cpu = Box::leak(cpu) as *mut Cpu;
+
+        write_sscratch_register(static_cpu);
     }
 
     pub fn current() -> CpuRefHolder {
@@ -77,7 +81,7 @@ impl Cpu {
         unsafe { CpuRefHolder(&mut *ptr) }
     }
 
-    pub fn cpu_id(&self) -> u64 {
+    pub fn cpu_id(&self) -> usize {
         self.cpu_id
     }
 

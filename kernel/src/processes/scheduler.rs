@@ -1,5 +1,4 @@
-use alloc::{boxed::Box, sync::Arc};
-use core::cell::UnsafeCell;
+use alloc::sync::Arc;
 
 use common::mutex::Mutex;
 
@@ -19,18 +18,17 @@ use super::{
 
 pub static THE: RuntimeInitializedData<Mutex<Scheduler>> = RuntimeInitializedData::new();
 
-pub fn init(num_cpus: u64) {
-    THE.initialize(Mutex::new(Scheduler::new(num_cpus)));
+pub fn init() {
+    THE.initialize(Mutex::new(Scheduler::new()));
 }
 
 pub struct Scheduler {
     process_table: ProcessTable,
     current_process: ProcessRef,
-    per_cpu_data: Box<[UnsafeCell<Cpu>]>,
 }
 
 impl Scheduler {
-    fn new(num_cpus: u64) -> Self {
+    fn new() -> Self {
         let mut process_table = ProcessTable::new();
         let current_process = process_table.get_powersave_process();
 
@@ -39,19 +37,10 @@ impl Scheduler {
         process_table.add_process(process);
         info!("Scheduler initialized and INIT process added to queue");
 
-        let per_cpu_data = (0..num_cpus)
-            .map(|id| UnsafeCell::new(Cpu::new(id)))
-            .collect();
-
         Self {
             process_table,
             current_process,
-            per_cpu_data,
         }
-    }
-
-    pub fn get_per_cpu_data_ptr(&self, cpu_id: usize) -> *mut Cpu {
-        self.per_cpu_data[cpu_id].get()
     }
 
     pub fn dump(&self) {

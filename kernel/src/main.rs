@@ -116,9 +116,9 @@ extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) {
 
     memory::initialize_runtime_mappings(&runtime_mapping);
 
-    scheduler::init(num_cpus);
+    Cpu::init(hart_id);
 
-    cpu::write_sscratch_register(scheduler::THE.lock().get_per_cpu_data_ptr(hart_id));
+    scheduler::init();
 
     Cpu::current().activate_kernel_page_table();
 
