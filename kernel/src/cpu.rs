@@ -6,13 +6,14 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use common::syscalls::trap_frame::TrapFrame;
+use common::mutex::MutexGuard;
 
 use crate::{
     klibc::sizes::KiB,
     memory::page_tables::{
         activate_page_table, get_satp_value_from_page_tables, RootPageTableHolder,
     },
+    processes::{process::Process, process_table::ProcessRef, scheduler::CpuScheduler},
 };
 
 const KERNEL_STACK_SIZE: usize = KiB(512);
@@ -20,14 +21,13 @@ const KERNEL_STACK_SIZE: usize = KiB(512);
 const SIE_STIE: usize = 5;
 const SSTATUS_SPP: usize = 8;
 
-// We need to make sure that the trap frame is the first member
-// We store a pointer to his structure in sscratch and on an interrupt
-// we're saving the context to the trap_frame, assuming it lies at offset
-// 0x0 of the struct.
+/// This struct will exist per cpu. Some of the members are accessed in assembly.
+/// So we need to make sure to not move the fields around otherwise the offset are wrong.
+/// However, we setup some const assertions to check that compile time.
 #[repr(C)]
 pub struct Cpu {
-    trap_frame: TrapFrame,
     kernel_page_tables_satp_value: usize,
+    scheduler: CpuScheduler,
     cpu_id: usize,
     kernel_stack: *mut u8,
     kernel_page_tables: RootPageTableHolder,
@@ -36,12 +36,12 @@ pub struct Cpu {
 
 const _: () = const {
     assert!(
-        offset_of!(Cpu, trap_frame) == 0x0,
-        "trap_frame is accessed in trap.S. If offset is changed it must be changed there."
+        offset_of!(Cpu, kernel_page_tables_satp_value) == 0x0,
+        "kernel_page_tables_satp_value is accessed in trap.S. If offset is changed, it must be changed there."
     );
     assert!(
-        offset_of!(Cpu, kernel_page_tables_satp_value) == 0x200,
-        "kernel_page_tables_satp_value is accessed in trap.S. If offset is changd it must be changed there."
+        offset_of!(Cpu, scheduler) == 0x8,
+        "scheduler.trap_frame is accessed in trap.S. If offset is changed, it must be changed there."
     );
 };
 
@@ -130,8 +130,8 @@ impl Cpu {
         let satp_value = get_satp_value_from_page_tables(&page_tables);
 
         let cpu = Box::new(Self {
-            trap_frame: TrapFrame::zero(),
             kernel_page_tables_satp_value: satp_value,
+            scheduler: CpuScheduler::new(),
             cpu_id,
             kernel_stack,
             kernel_page_tables: page_tables,
@@ -162,6 +162,20 @@ impl Cpu {
         unsafe { CpuRefHolder(&mut *ptr) }
     }
 
+    pub fn with_scheduler<R>(mut f: impl FnMut(&mut CpuScheduler) -> R) -> R {
+        let mut cpu = Self::current();
+        let scheduler = cpu.scheduler_mut();
+        f(scheduler)
+    }
+
+    pub fn current_process() -> ProcessRef {
+        Self::with_scheduler(|s| s.get_current_process().clone())
+    }
+
+    pub fn with_current_process<R>(mut f: impl FnMut(MutexGuard<'_, Process>) -> R) -> R {
+        Self::with_scheduler(|s| f(s.get_current_process().lock()))
+    }
+
     pub unsafe fn current_nevertheless() -> CpuRefHolder {
         let ptr = Self::get_per_cpu_data();
         unsafe { CpuRefHolder(&mut *ptr) }
@@ -179,12 +193,12 @@ impl Cpu {
         &self.kernel_page_tables
     }
 
-    pub fn trap_frame_mut(&mut self) -> &mut TrapFrame {
-        &mut self.trap_frame
+    pub fn scheduler(&self) -> &CpuScheduler {
+        &self.scheduler
     }
 
-    pub fn trap_frame(&self) -> &TrapFrame {
-        &self.trap_frame
+    pub fn scheduler_mut(&mut self) -> &mut CpuScheduler {
+        &mut self.scheduler
     }
 
     pub unsafe fn write_satp_and_fence(satp_val: usize) {

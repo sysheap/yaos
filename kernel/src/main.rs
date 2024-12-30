@@ -20,17 +20,15 @@
 #![reexport_test_harness_main = "test_main"]
 
 use crate::{
-    interrupts::plic,
-    io::uart::QEMU_UART,
-    memory::page_tables,
-    pci::enumerate_devices,
-    processes::{scheduler, timer},
+    interrupts::plic, io::uart::QEMU_UART, memory::page_tables, pci::enumerate_devices,
+    processes::timer,
 };
 use alloc::vec::Vec;
 use cpu::Cpu;
 use debugging::{backtrace, symbols};
 use device_tree::get_devicetree_range;
 use memory::page_tables::MappingDescription;
+use processes::process_table;
 
 mod asm;
 mod assert;
@@ -116,9 +114,9 @@ extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) {
 
     memory::initialize_runtime_mappings(&runtime_mapping);
 
-    Cpu::init(hart_id);
+    process_table::init();
 
-    scheduler::init();
+    Cpu::init(hart_id);
 
     Cpu::current().activate_kernel_page_table();
 

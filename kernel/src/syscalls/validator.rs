@@ -3,7 +3,7 @@ use common::{
     syscalls::userspace_argument::{UserspaceArgument, UserspaceArgumentValueExtractor},
 };
 
-use crate::processes::scheduler;
+use crate::cpu::Cpu;
 
 pub trait FailibleSliceValidator<'a, T: 'a> {
     fn validate(self, len: usize) -> Result<&'a T, ()>;
@@ -36,7 +36,7 @@ simple_type!(UDPDescriptor);
 
 impl<'a> FailibleSliceValidator<'a, u8> for UserspaceArgument<&'a u8> {
     fn validate(self, len: usize) -> Result<&'a u8, ()> {
-        let current_process = scheduler::THE.lock().get_current_process().clone();
+        let current_process = Cpu::with_scheduler(|s| s.get_current_process().clone());
 
         current_process.with_lock(|p| {
             let page_table = p.get_page_table();
@@ -60,7 +60,7 @@ impl<'a> FailibleSliceValidator<'a, u8> for UserspaceArgument<&'a u8> {
 }
 impl<'a> FailibleMutableSliceValidator<'a, u8> for UserspaceArgument<&'a mut u8> {
     fn validate(self, len: usize) -> Result<&'a mut u8, ()> {
-        let current_process = scheduler::THE.lock().get_current_process().clone();
+        let current_process = Cpu::current_process();
 
         current_process.with_lock(|p| {
             let page_table = p.get_page_table();
