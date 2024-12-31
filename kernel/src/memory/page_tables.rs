@@ -463,6 +463,29 @@ impl RootPageTableHolder {
             (entry.get_physical_address() as usize + offset_from_page_start) as *const T
         })
     }
+
+    pub fn get_satp_value_from_page_tables(&self) -> usize {
+        let page_table_address = self.table().get_physical_address();
+
+        let page_table_address_shifted = page_table_address >> 12;
+
+        8 << 60 | (page_table_address_shifted & 0xfffffffffff)
+    }
+
+    pub fn activate_page_table(&self) {
+        let page_table_address = self.table().get_physical_address();
+
+        debug!(
+            "Activate new page mapping (Addr of page tables 0x{:x})",
+            page_table_address
+        );
+
+        let satp_val = self.get_satp_value_from_page_tables();
+
+        unsafe {
+            Cpu::write_satp_and_fence(satp_val);
+        };
+    }
 }
 
 #[repr(C, align(4096))]
@@ -618,29 +641,6 @@ impl PageTableEntry {
         let phyiscal_address = self.get_physical_address();
         unsafe { &mut *phyiscal_address }
     }
-}
-
-pub fn get_satp_value_from_page_tables(page_tables: &RootPageTableHolder) -> usize {
-    let page_table_address = page_tables.table().get_physical_address();
-
-    let page_table_address_shifted = page_table_address >> 12;
-
-    8 << 60 | (page_table_address_shifted & 0xfffffffffff)
-}
-
-pub fn activate_page_table(page_table_holder: &RootPageTableHolder) {
-    let page_table_address = page_table_holder.table().get_physical_address();
-
-    debug!(
-        "Activate new page mapping (Addr of page tables 0x{:x})",
-        page_table_address
-    );
-
-    let satp_val = get_satp_value_from_page_tables(page_table_holder);
-
-    unsafe {
-        Cpu::write_satp_and_fence(satp_val);
-    };
 }
 
 #[cfg(test)]

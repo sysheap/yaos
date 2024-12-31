@@ -4,7 +4,6 @@ use crate::{
     debug,
     interrupts::plic::{self, InterruptSource},
     io::{stdin_buf::STDIN_BUFFER, uart},
-    memory::page_tables::get_satp_value_from_page_tables,
     processes::process::ProcessState,
     syscalls::{self},
 };
@@ -13,7 +12,7 @@ use core::panic;
 
 #[no_mangle]
 extern "C" fn get_process_satp_value() -> usize {
-    Cpu::with_current_process(|p| get_satp_value_from_page_tables(p.get_page_table()))
+    Cpu::with_current_process(|p| p.get_page_table().get_satp_value_from_page_tables())
 }
 
 #[no_mangle]

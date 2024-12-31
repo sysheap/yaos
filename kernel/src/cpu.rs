@@ -10,9 +10,7 @@ use common::mutex::MutexGuard;
 
 use crate::{
     klibc::sizes::KiB,
-    memory::page_tables::{
-        activate_page_table, get_satp_value_from_page_tables, RootPageTableHolder,
-    },
+    memory::page_tables::RootPageTableHolder,
     processes::{
         process::Process,
         process_table::ProcessRef,
@@ -119,7 +117,7 @@ impl Cpu {
             format!("KERNEL_STACK CPU {cpu_id}"),
         );
 
-        let satp_value = get_satp_value_from_page_tables(&page_tables);
+        let satp_value = page_tables.get_satp_value_from_page_tables();
 
         let cpu = Box::new(Self {
             kernel_page_tables_satp_value: satp_value,
@@ -177,7 +175,7 @@ impl Cpu {
     }
 
     pub fn activate_kernel_page_table(&self) {
-        activate_page_table(&self.kernel_page_tables);
+        self.kernel_page_tables.activate_page_table();
     }
 
     pub fn kernel_page_table(&self) -> &RootPageTableHolder {
