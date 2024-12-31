@@ -24,7 +24,7 @@
 	csrrw t6, sscratch, t6
 
 	# Trap frame is at offset 0x8 in Cpu struct
-	addi t6, t6, 0x8
+	addi t6, t6, {TRAP_FRAME_OFFSET}
 
 	# Save all registers
 	# In order to make things easier we also save x0 which is always zero
@@ -43,7 +43,7 @@
 	save_gp 31, t5
 
 	# Remove trap frame offset
-	addi t5, t5, -0x8
+	addi t5, t5, -{TRAP_FRAME_OFFSET}
 
 	# Restore trap frame pointer
 	csrw sscratch, t5
@@ -54,7 +54,7 @@
 	csrr t6, sscratch
 
 	# Trap frame is at offset 0x8 in Cpu struct
-	addi t6, t6, 0x8
+	addi t6, t6, {TRAP_FRAME_OFFSET}
 
 	.set i,0
 	.rept 32
@@ -74,7 +74,7 @@ asm_\func:
 
 	# Load kernel page tables such that we get the correct stack
 	csrr t0, sscratch
-	ld t1, 0x0(t0)
+	ld t1, {KERNEL_PAGE_TABLES_SATP_OFFSET}(t0)
 	csrw satp, t1
 	sfence.vma zero, zero
 

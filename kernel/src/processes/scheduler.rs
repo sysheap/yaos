@@ -17,19 +17,13 @@ use super::{
     process_table::{self, ProcessRef},
 };
 
-#[repr(C)]
+pub const TRAP_FRAME_OFFSET: usize = offset_of!(CpuScheduler, trap_frame);
+
 pub struct CpuScheduler {
     trap_frame: TrapFrame,
     current_process: ProcessRef,
     powersave_process: ProcessRef,
 }
-
-const _: () = const {
-    assert!(
-        offset_of!(CpuScheduler, trap_frame) == 0x0,
-        "trap_frame is accessed in trap.S. If offset is changed, it must be changed there."
-    );
-};
 
 impl CpuScheduler {
     pub fn new() -> Self {

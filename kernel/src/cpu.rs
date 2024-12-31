@@ -13,7 +13,11 @@ use crate::{
     memory::page_tables::{
         activate_page_table, get_satp_value_from_page_tables, RootPageTableHolder,
     },
-    processes::{process::Process, process_table::ProcessRef, scheduler::CpuScheduler},
+    processes::{
+        process::Process,
+        process_table::ProcessRef,
+        scheduler::{self, CpuScheduler},
+    },
 };
 
 const KERNEL_STACK_SIZE: usize = KiB(512);
@@ -21,29 +25,17 @@ const KERNEL_STACK_SIZE: usize = KiB(512);
 const SIE_STIE: usize = 5;
 const SSTATUS_SPP: usize = 8;
 
-/// This struct will exist per cpu. Some of the members are accessed in assembly.
-/// So we need to make sure to not move the fields around otherwise the offset are wrong.
-/// However, we setup some const assertions to check that compile time.
-#[repr(C)]
+pub const TRAP_FRAME_OFFSET: usize = offset_of!(Cpu, scheduler) + scheduler::TRAP_FRAME_OFFSET;
+
+pub const KERNEL_PAGE_TABLES_SATP_OFFSET: usize = offset_of!(Cpu, kernel_page_tables_satp_value);
+
 pub struct Cpu {
     kernel_page_tables_satp_value: usize,
     scheduler: CpuScheduler,
     cpu_id: usize,
-    kernel_stack: *mut u8,
     kernel_page_tables: RootPageTableHolder,
     mutable_reference_alive: Cell<bool>,
 }
-
-const _: () = const {
-    assert!(
-        offset_of!(Cpu, kernel_page_tables_satp_value) == 0x0,
-        "kernel_page_tables_satp_value is accessed in trap.S. If offset is changed, it must be changed there."
-    );
-    assert!(
-        offset_of!(Cpu, scheduler) == 0x8,
-        "scheduler.trap_frame is accessed in trap.S. If offset is changed, it must be changed there."
-    );
-};
 
 macro_rules! read_csrr {
     ($name: ident) => {
@@ -133,7 +125,6 @@ impl Cpu {
             kernel_page_tables_satp_value: satp_value,
             scheduler: CpuScheduler::new(),
             cpu_id,
-            kernel_stack,
             kernel_page_tables: page_tables,
             mutable_reference_alive: Cell::new(false),
         });

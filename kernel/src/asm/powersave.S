@@ -7,8 +7,8 @@ powersave:
         csrc sie, t0
 
         # Set next timer interrupt to -2
-        li a7, 0x54494D45  # eid
-        li a6, 0x0         # fid
+        li a7, {EID}
+        li a6, {FID_SET_TIMER}
 
         # arg
         li a0, 0
