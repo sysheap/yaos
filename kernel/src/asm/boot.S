@@ -47,12 +47,5 @@ bss_cleared:
 
 	call kernel_init
 
-	# Enable all interrupts
-	li t0, -1
-	csrw sie, t0
-
-	# Enable global interrupts
-	li t0, 0b10
-	csrs sstatus, t0
-
-	j wfi_loop
+	# We should never come here
+	j asm_panic_rust

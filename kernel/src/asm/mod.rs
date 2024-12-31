@@ -18,7 +18,7 @@ pub fn asm_panic_rust() {
 
 #[unsafe(no_mangle)]
 #[naked]
-pub extern "C" fn wfi_loop() {
+pub extern "C" fn wfi_loop() -> ! {
     unsafe {
         core::arch::naked_asm!(
             "

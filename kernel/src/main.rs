@@ -24,6 +24,7 @@ use crate::{
     processes::timer,
 };
 use alloc::vec::Vec;
+use asm::wfi_loop;
 use cpu::Cpu;
 use debugging::{backtrace, symbols};
 use device_tree::get_devicetree_range;
@@ -55,7 +56,7 @@ mod test;
 extern crate alloc;
 
 #[unsafe(no_mangle)]
-extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) {
+extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) -> ! {
     QEMU_UART.lock().init();
 
     info!("Hello World from YaOS!\n");
@@ -131,7 +132,29 @@ extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) {
         net::assign_network_device(network_device);
     }
 
+    start_other_harts(hart_id, num_cpus);
+
+    info!("kernel_init done! Enabling interrupts");
+
+    // Enable all interrupts
+    Cpu::write_sie(usize::MAX);
+
+    // Enable global interrupts
+    Cpu::csrs_sstatus(0b10);
+
     timer::set_timer(0);
 
-    info!("kernel_init done!");
+    wfi_loop();
+}
+
+fn start_other_harts(current_hart_id: usize, number_of_cpus: usize) {
+    for cpu_id in 0..number_of_cpus {
+        if cpu_id == current_hart_id {
+            continue;
+        }
+
+        info!("Starting cpu {cpu_id}");
+        sbi::extensions::hart_state_extension::start_hart(cpu_id, wfi_loop as usize, cpu_id)
+            .assert_success();
+    }
 }
