@@ -27,7 +27,7 @@ pub struct CpuScheduler {
 
 impl CpuScheduler {
     pub fn new() -> Self {
-        let powersave_process = process_table::THE.lock().get_powersave_process();
+        let powersave_process = Process::create_powersave_process();
 
         Self {
             trap_frame: TrapFrame::zero(),
@@ -112,6 +112,12 @@ impl CpuScheduler {
             return POWERSAVE_PID;
         }
         self.swap_current_with_powersave().with_lock(|mut p| {
+            match p.get_state() {
+                ProcessState::Running => p.set_state(ProcessState::Runnable),
+                ProcessState::Waiting => {}
+                ProcessState::Runnable => panic!("Inavlid process state."),
+            }
+
             p.set_program_counter(Cpu::read_sepc());
             p.set_in_kernel_mode(Cpu::is_in_kernel_mode());
             p.set_register_state(&self.trap_frame);
@@ -129,8 +135,12 @@ impl CpuScheduler {
                 info!("No more processes to schedule, shutting down system");
                 qemu_exit::exit_success();
             }
+            let next_runnable = pt
+                .next_runnable(old_pid)
+                .unwrap_or(self.powersave_process.clone());
 
-            self.current_process = pt.next_runnable(old_pid);
+            self.current_process = next_runnable;
+            self.current_process.lock().set_state(ProcessState::Running);
         });
 
         self.set_cpu_reg_for_current_process();

@@ -117,7 +117,7 @@ extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) -> ! {
 
     process_table::init();
 
-    Cpu::init(hart_id);
+    Cpu::write_sscratch(Cpu::init(hart_id) as usize);
 
     Cpu::current().activate_kernel_page_table();
 
@@ -136,6 +136,10 @@ extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) -> ! {
 
     info!("kernel_init done! Enabling interrupts");
 
+    prepare_for_scheduling();
+}
+
+fn prepare_for_scheduling() -> ! {
     // Enable all interrupts
     Cpu::write_sie(usize::MAX);
 
@@ -148,13 +152,28 @@ extern "C" fn kernel_init(hart_id: usize, device_tree_pointer: *const ()) -> ! {
 }
 
 fn start_other_harts(current_hart_id: usize, number_of_cpus: usize) {
+    extern "C" {
+        fn start_hart();
+    }
     for cpu_id in 0..number_of_cpus {
         if cpu_id == current_hart_id {
             continue;
         }
 
         info!("Starting cpu {cpu_id}");
-        sbi::extensions::hart_state_extension::start_hart(cpu_id, wfi_loop as usize, cpu_id)
-            .assert_success();
+        let cpu_struct = Cpu::init(cpu_id);
+        sbi::extensions::hart_state_extension::start_hart(
+            cpu_id,
+            start_hart as usize,
+            cpu_struct as usize,
+        )
+        .assert_success();
     }
+}
+
+#[no_mangle]
+extern "C" fn hart_init() -> ! {
+    let cpu_id = Cpu::cpu_id();
+    info!("Cpu {cpu_id} started!");
+    prepare_for_scheduling();
 }

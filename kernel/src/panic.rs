@@ -27,7 +27,7 @@ fn panic(info: &PanicInfo) -> ! {
     let cpu = unsafe { Cpu::current_nevertheless() };
 
     println!("");
-    println!("KERNEL Panic Occured on cpu {}!", cpu.cpu_id());
+    println!("KERNEL Panic Occured on cpu {}!", Cpu::cpu_id());
     println!("Message: {}", info.message());
     if let Some(location) = info.location() {
         println!("Location: {}", location);

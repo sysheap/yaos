@@ -25,14 +25,12 @@ pub fn init() {
 
 pub struct ProcessTable {
     processes: BTreeMap<Pid, ProcessRef>,
-    powersave_process: ProcessRef,
 }
 
 impl ProcessTable {
     pub fn new() -> Self {
         Self {
             processes: BTreeMap::new(),
-            powersave_process: Arc::new(Mutex::new(Process::powersave())),
         }
     }
 
@@ -82,7 +80,7 @@ impl ProcessTable {
         }
     }
 
-    pub fn next_runnable(&self, old_pid: Pid) -> ProcessRef {
+    pub fn next_runnable(&self, old_pid: Pid) -> Option<ProcessRef> {
         let mut next_iter = self
             .processes
             .range(old_pid..)
@@ -90,14 +88,13 @@ impl ProcessTable {
             .filter_map(Self::filter_map_runnable_processes);
 
         if let Some(next_process) = next_iter.next() {
-            next_process.clone()
+            Some(next_process.clone())
         } else {
             self.processes
                 .iter()
                 .filter_map(Self::filter_map_runnable_processes)
                 .next()
                 .cloned()
-                .unwrap_or(self.get_powersave_process())
         }
     }
 
@@ -111,10 +108,6 @@ impl ProcessTable {
 
     pub fn get_process(&self, pid: Pid) -> Option<&ProcessRef> {
         self.processes.get(&pid)
-    }
-
-    pub fn get_powersave_process(&self) -> ProcessRef {
-        self.powersave_process.clone()
     }
 
     pub fn wake_process_up(&self, pid: Pid) {

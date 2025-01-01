@@ -8,9 +8,11 @@ use crate::{
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     string::{String, ToString},
+    sync::Arc,
     vec::Vec,
 };
 use common::{
+    mutex::Mutex,
     net::UDPDescriptor,
     syscalls::trap_frame::{Register, TrapFrame},
 };
@@ -27,6 +29,7 @@ const FREE_MMAP_START_ADDRESS: usize = 0x2000000000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessState {
+    Running,
     Runnable,
     Waiting,
 }
@@ -80,11 +83,11 @@ impl Debug for Process {
 }
 
 impl Process {
-    pub fn powersave() -> Self {
+    pub fn create_powersave_process() -> Arc<Mutex<Self>> {
         extern "C" {
             fn powersave();
         }
-        Self {
+        Arc::new(Mutex::new(Self {
             name: "powersave".to_string(),
             pid: POWERSAVE_PID,
             register_state: TrapFrame::zero(),
@@ -97,7 +100,7 @@ impl Process {
             open_udp_sockets: BTreeMap::new(),
             in_kernel_mode: true,
             notify_on_die: BTreeSet::new(),
-        }
+        }))
     }
 
     pub fn get_notifies_on_die(&self) -> impl Iterator<Item = &Pid> {

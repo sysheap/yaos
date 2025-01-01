@@ -4,6 +4,7 @@ use core::{
     cell::Cell,
     mem::offset_of,
     ops::{Deref, DerefMut},
+    ptr::addr_of,
 };
 
 use common::mutex::MutexGuard;
@@ -101,7 +102,7 @@ impl Cpu {
     write_csrr!(sstatus);
     write_csrr!(sie);
 
-    pub fn init(cpu_id: usize) {
+    pub fn init(cpu_id: usize) -> *mut Cpu {
         let kernel_stack =
             Box::leak(vec![0u8; KERNEL_STACK_SIZE].into_boxed_slice()) as *mut _ as *mut u8;
         let mut page_tables = RootPageTableHolder::new_with_kernel_mapping();
@@ -127,9 +128,7 @@ impl Cpu {
             mutable_reference_alive: Cell::new(false),
         });
 
-        let static_cpu = Box::leak(cpu) as *mut Cpu;
-
-        Self::write_sscratch(static_cpu as usize);
+        Box::leak(cpu) as *mut Cpu
     }
 
     fn get_per_cpu_data() -> *mut Self {
@@ -170,8 +169,12 @@ impl Cpu {
         unsafe { CpuRefHolder(&mut *ptr) }
     }
 
-    pub fn cpu_id(&self) -> usize {
-        self.cpu_id
+    pub fn cpu_id() -> isize {
+        let ptr = Self::read_sscratch() as *mut Self;
+        if ptr.is_null() {
+            return -1;
+        }
+        unsafe { *addr_of!((*ptr).cpu_id) as isize }
     }
 
     pub fn activate_kernel_page_table(&self) {
