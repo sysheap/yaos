@@ -6,7 +6,7 @@ use core::{
 };
 
 use alloc::{boxed::Box, vec::Vec};
-use common::{mutex::Mutex, util::align_up};
+use common::{mutex::Mutex, unwrap_or_return, util::align_up};
 
 use crate::{
     assert::static_assert_size,
@@ -481,7 +481,24 @@ impl RootPageTableHolder {
 
     pub fn is_userspace_address(&self, address: usize) -> bool {
         self.get_page_table_entry_for_address(address)
-            .is_some_and(|entry| entry.get_user_mode_accessible())
+            .is_some_and(|entry| entry.get_validity() && entry.get_user_mode_accessible())
+    }
+
+    pub fn is_valid_userspace_ptr<T>(&self, ptr: *const T) -> bool {
+        let start = ptr as usize;
+        let end = start + core::mem::size_of::<T>();
+
+        // We only need to check for each PAGE_SIZE step if it is mapped
+        for addr in (start..end).step_by(PAGE_SIZE) {
+            let entry = unwrap_or_return!(self.get_page_table_entry_for_address(addr), false);
+            if !entry.get_validity()
+                || !entry.get_user_mode_accessible()
+                || !matches!(entry.get_xwr_mode(), XWRMode::ReadOnly | XWRMode::ReadWrite)
+            {
+                return false;
+            }
+        }
+        true
     }
 
     pub fn translate_userspace_address_to_physical_address<T>(
